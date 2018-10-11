@@ -21,7 +21,10 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
    * @return true or false
    */
   public function canProcessRecord($record, $sourceURI) {
-    // TODO
+    // just check if some typical values are there...
+    return isset($record['UebgID'])
+        && isset($record['FrkDat'])
+        && isset($record['KdInfoDMC']);
   }
 
   /**
@@ -34,28 +37,48 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
   public function processRecord($record, $sourceURI) {
     $config = CRM_Streetimport_Config::singleton();
 
-    // STEP 1: match/create contact
-    $contact_id = $this->processContact($record);
+    // STEP 1: extract data
+    $old_data  = $this->extractAddress($record, 'E_');
+    $new_data  = $this->extractAddress($record, 'NSA_');
 
-    // STEP 2: create a new contract for the contact
-    $contract_id = $this->createDDContract($contact_id, $record);
+    // STEP 2: find contact and address
+    $contact = $this->findContact($old_data);
+    $address = $this->findAddress($contact, $old_data);
 
-    // STEP 3: process Features and stuff
-    $this->processAdditionalInformation($contact_id, $contract_id, $record);
+    // STEP 3: update address
 
-    // STEP 4: create 'manual check' activity
-    $note = trim(CRM_Utils_Array::value('Bemerkungen', $record, ''));
-    if ($note) {
-      $this->createManualUpdateActivity($contact_id, $note, $record);
-    }
+    // STEP 4: create activity
 
-    $deprecated_start_date = trim(CRM_Utils_Array::value('Vertrags_Beginn', $record, ''));
-    if ($deprecated_start_date && (strtotime($deprecated_start_date) > strtotime('now'))) {
-      $this->createManualUpdateActivity($contact_id, "Deprecated value 'Vertrags_Beginn' given: {$deprecated_start_date}", $record);
-    }
-
-    civicrm_api3('Contract', 'process_scheduled_modifications', array());
-    $this->logger->logImport($record, true, $config->translate('DD Contact'));
+    $this->logger->logImport($record, true, $config->translate('Premium Address'));
   }
 
+  /**
+   * Get the contact data from the given record
+   *
+   * @param array $record
+   * @return array contact data
+   */
+  protected function extractAddress($record, $prefix = '') {
+    $data = [
+        'first_name'  => CRM_Utils_Array::value("{$prefix}Na1", $record, ''),
+        'last_name'   => CRM_Utils_Array::value("{$prefix}Na2", $record, ''),
+        'name_2'      => CRM_Utils_Array::value("{$prefix}Na3", $record, ''),
+        'name_3'      => CRM_Utils_Array::value("{$prefix}Na4", $record, ''),
+        'street'      => CRM_Utils_Array::value("{$prefix}Str", $record, ''),
+        'number'      => CRM_Utils_Array::value("{$prefix}HNr", $record, ''),
+        'postal_code' => CRM_Utils_Array::value("{$prefix}PLZ", $record, ''),
+        'city'        => CRM_Utils_Array::value("{$prefix}Ort", $record, ''),
+        'country'     => CRM_Utils_Array::value("{$prefix}Land", $record, ''),
+    ];
+
+    // compile address
+    $data['street_address'] = trim("{$data['street']} {$data['number']}");
+
+    // default country is DE
+    if (empty($data['country'])) {
+      $data['country'] = 'DE';
+    }
+
+    return $data;
+  }
 }
