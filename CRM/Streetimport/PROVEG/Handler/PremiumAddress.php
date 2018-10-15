@@ -36,7 +36,6 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
    */
   public function processRecord($record, $sourceURI) {
     $config = CRM_Streetimport_Config::singleton();
-    CRM_Core_Error::debug_log_message("Looking at record [{$record['UebgID']}]", $record);
 
     // find contact
     $contact = $this->identifyContact($record);
@@ -206,18 +205,18 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
 
 
   protected function createPremiumActivity($contact, $record, $subject, $status) {
-    $this->getLogger()->logMessage("Would create activity: $subject");
+    $this->getLogger()->logMessage("Would create {$status} activity: $subject", $record);
     // TODO
   }
 
   protected function deleteAddresses($contact, $record) {
-    $this->getLogger()->logMessage("Would delete address: " . json_encode($contact['address']));
+    $this->getLogger()->logMessage("Would delete address: {$contact['street_address']} | {$contact['postal_code']} {$contact['city']}", $record);
     // TODO
   }
 
   protected function addAddress($contact, $record) {
     $entry_new = $this->extractAddress($record, 'NSA_');
-    $this->getLogger()->logMessage("Would add address: " . json_encode($entry_new));
+    $this->getLogger()->logMessage("Would add new address: {$entry_new['street_address']} | {$entry_new['postal_code']} {$entry_new['city']}", $record);
     // TODO
   }
 
