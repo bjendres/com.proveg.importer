@@ -137,58 +137,90 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
    * Tries to identify the contact and all releated addresses
    *
    * @param array $record
-   * @return array with contact data, with an entry 'addresses' with an array of all matching addresses
+   * @return array with contact data, with an entry 'address' with an array of all matching addresses
    */
   protected function identifyContact($record) {
-    // TODO
+    // find all potential contact ids
+    $contact_ids = [];
+
+    // get customer data (the data that we sent)
+    $contact_data = $this->extractAddress($record, 'Kd_');
+
+    // search with display name
+    $contact_search_1 = civicrm_api3('Contact', 'get', [
+        'display_name' => $contact_data['name_1'],
+        'return'       => 'id',
+        'option.limit' => 0,
+        'sequential'   => 0]);
+    $contact_ids += array_keys($contact_search_1['values']);
+
+    // search with first/last name
+    if (preg_match("#^(?P<prefix_id>Herr|Frau)? *(?P<first_name>\\w+).* (?P<last_name>\\w+)$#", $contact_data['name_1'], $matches)) {
+      $contact_search_2 = civicrm_api3('Contact', 'get', [
+          'first_name'   => $matches['first_name'],
+          'last_name'    => $matches['last_name'],
+          'return'       => 'id',
+          'option.limit' => 0,
+          'sequential'   => 0]);
+      $contact_ids += array_keys($contact_search_2['values']);
+    }
+
+    // search by address
+    if (!empty($contact_data['street_address']) && !empty($contact_data['postal_code']) && !empty($contact_data['city'])) {
+      $address_search_1 = civicrm_api3('Address', 'get', [
+          'street_address' => $contact_data['street_address'],
+          'postal_code'    => $contact_data['postal_code'],
+          'city'           => $contact_data['city'],
+          'option.limit'   => 0,
+          'return'         => 'contact_id,id'
+      ]);
+      foreach ($address_search_1['values'] as $address) {
+        $contact_ids[] = $address['contact_id'];
+      }
+    }
+
+    if (empty($contact_ids)) {
+      // nobody found
+      return [];
+    }
+
+    // NOW, load all the addresses and find the best match
+    $address_candidates = civicrm_api3('Address', 'get', [
+        'contact_id'   => ['IN' => $contact_ids],
+        'option.limit' => 0
+    ]);
+
+    // ... and select the best ones
+    $address = $this->selectAddressMatch($address_candidates['values'], $contact_data, $record);
+
+    if (!$address) {
+      // no address found
+      return [];
+    }
+
+    // load contact
+    $contact = civicrm_api3('Contact', 'getsingle', ['id' => $address['contact_id']]);
+    $contact['address'] = $address;
+    return $contact;
   }
 
 
   protected function createPremiumActivity($contact, $record, $subject, $status) {
+    $this->getLogger()->logMessage("Would create activity: $subject");
     // TODO
   }
 
   protected function deleteAddresses($contact, $record) {
+    $this->getLogger()->logMessage("Would delete address: " . json_encode($contact['address']));
     // TODO
   }
 
   protected function addAddress($contact, $record) {
     $entry_new = $this->extractAddress($record, 'NSA_');
+    $this->getLogger()->logMessage("Would add address: " . json_encode($entry_new));
     // TODO
   }
 
-
-
-
-
-
-
-
-
-
-  /**
-   * Find all contacts matching first and last name
-   *
-   * @param $contact_data
-   * @throws CiviCRM_API3_Exception
-   * @return array contacts
-   */
-  protected function findContacts($contact_data, $record) {
-    if (empty($contact_data['first_name']) || empty($contact_data['last_name'])) {
-      $this->getLogger()->logMessage("No name given", $record);
-      return [];
-    }
-
-    $contacts = civicrm_api3('Contact', 'get', [
-        'first_name'   => $contact_data['first_name'],
-        'last_name'    => $contact_data['last_name'],
-        'return'       => 'id',
-        'option.limit' => 0,
-        'sequential'   => 0,
-    ]);
-    CRM_Core_Error::debug_log_message("Found " . $contacts['count'] . " contacts.");
-    return $contacts['values'];
-  }
 
   /**
    * Find all addresses with the contact
@@ -248,6 +280,10 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
       CRM_Core_Error::debug_log_message("NO MATCH FOR: " . json_encode($sample));
     }
 
-    return $highscorer;
+    if ($highscore >= 2.8) {
+      return $highscorer;
+    } else {
+      return NULL;
+    }
   }
 }
