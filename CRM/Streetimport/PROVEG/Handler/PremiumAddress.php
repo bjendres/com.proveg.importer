@@ -151,6 +151,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
         'return'       => 'id',
         'option.limit' => 0,
         'sequential'   => 0]);
+    $this->getLogger()->logMessage("Find by display_name '{$contact_data['name_1']}' found: " . json_encode(array_keys($contact_search_1['values'])), $record, BE_AIVL_STREETIMPORT_DEBUG);
     $contact_ids += array_keys($contact_search_1['values']);
 
     // search with first/last name
@@ -161,6 +162,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
           'return'       => 'id',
           'option.limit' => 0,
           'sequential'   => 0]);
+      $this->getLogger()->logMessage("Find by first/last name '{$matches['first_name']}'/'{$matches['last_name']}' found: " . json_encode(array_keys($contact_search_2['values'])), $record, BE_AIVL_STREETIMPORT_DEBUG);
       $contact_ids += array_keys($contact_search_2['values']);
     }
 
@@ -174,12 +176,14 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
           'return'         => 'contact_id,id'
       ]);
       foreach ($address_search_1['values'] as $address) {
+        $this->getLogger()->logMessage("Find by address '{$contact_data['street_address']}'/'{$contact_data['postal_code']}'/'{$contact_data['city']}' found: {$address['contact_id']}", $record, BE_AIVL_STREETIMPORT_DEBUG);
         $contact_ids[] = $address['contact_id'];
       }
     }
 
     if (empty($contact_ids)) {
       // nobody found
+      $this->getLogger()->logMessage("No contacts found!", $record, BE_AIVL_STREETIMPORT_DEBUG);
       return [];
     }
 
@@ -190,6 +194,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
     ]);
 
     // ... and select the best ones
+    $this->getLogger()->logMessage("Identified {$address_candidates['count']} addresses.", $record, BE_AIVL_STREETIMPORT_DEBUG);
     $address = $this->selectAddressMatch($address_candidates['values'], $contact_data, $record);
 
     if (!$address) {
@@ -274,14 +279,15 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
     }
 
     if ($highscorer) {
-      CRM_Core_Error::debug_log_message("MATCH {$highscore}: " . json_encode($highscorer) . ' FOR: ' . json_encode($sample));
+      $this->getLogger()->logMessage("MATCH {$highscore}: " . json_encode($highscorer) . ' FOR: ' . json_encode($sample), $record, BE_AIVL_STREETIMPORT_DEBUG);
     } else {
-      CRM_Core_Error::debug_log_message("NO MATCH FOR: " . json_encode($sample));
+      $this->getLogger()->logMessage("NO MATCH FOR: " . json_encode($sample) . ' FOR: ' . json_encode($sample), $record, BE_AIVL_STREETIMPORT_DEBUG);
     }
 
     if ($highscore >= 2.8) {
       return $highscorer;
     } else {
+      $this->getLogger()->logMessage("MATCH SCORE TOO LOW!", $record, BE_AIVL_STREETIMPORT_DEBUG);
       return NULL;
     }
   }
