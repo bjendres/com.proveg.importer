@@ -44,6 +44,8 @@ abstract class CRM_Streetimport_PROVEG_Handler_PVRecordHandler extends CRM_Stree
     $activity_data['label'] = $activity_label;
     $activity_data['option_group_id'] = 'activity_type';
     $activity = civicrm_api3('OptionValue', 'create', $activity_data);
+    // reload after create, because we don't get the value back
+    $activity = civicrm_api3('OptionValue', 'getsingle', ['id' => $activity['id']]);
     $this->_activity_name2id[$activity_name] = $activity['value'];
     return $activity['value'];
   }
