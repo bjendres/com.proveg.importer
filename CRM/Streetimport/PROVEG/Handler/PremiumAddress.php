@@ -42,7 +42,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
 
     if (!$contact) {
       // if contact not found: create activity
-      $this->createPremiumActivity($contact, $record, 'Contact not found.', 'Scheduled');
+      $this->createPremiumActivity($contact, $record, 'CiviCRM Contact not identified.', 'Scheduled');
       $this->getLogger()->logImport($record, false, $config->translate('Premium Address'));
 
     } else {
@@ -53,7 +53,8 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
         case 10:
           # "Empfänger / Firma unter der angegebenen Anschrift nicht zu ermitteln"
           # Kd_: ja, E_: nein, _NSA: nein
-          $this->createPremiumActivity($contact, $record, 'Contact not known', 'Scheduled');
+          $this->createPremiumActivity($contact, $record, 'Address invalid', 'Scheduled');
+          $this->deleteAddresses($contact, $record);
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
@@ -69,7 +70,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
           # Empfänger / Firma unter der angegebenen Anschrift nicht zu ermitteln, Qualifiziert durch Datenbank
           # Kd_: ja, E_: ja, _NSA: nein
           $this->deleteAddresses($contact, $record);
-          $this->createPremiumActivity($contact, $record, 'Couldn\'t reach', 'Completed');
+          $this->createPremiumActivity($contact, $record, 'Moved (address unknown)', 'Completed');
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
@@ -86,7 +87,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
           # Empfänger verzogen, Einwilligung zur Weitergabe der neuen Anschrift liegt nicht vor
           #  Kd_: ja, E_: ja, _NSA: nein
           $this->deleteAddresses($contact, $record);
-          $this->createPremiumActivity($contact, $record, 'Moved (address unknown)', 'Completed');
+          $this->createPremiumActivity($contact, $record, 'Moved (address classified)', 'Completed');
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
@@ -209,9 +210,40 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
   }
 
 
+  /**
+   * Create a Premium Address Update activity
+   *
+   * @param $contact
+   * @param $record
+   * @param $subject
+   * @param $status
+   */
   protected function createPremiumActivity($contact, $record, $subject, $status) {
-    $this->getLogger()->logMessage("Would create {$status} activity: $subject", $record);
-    // TODO
+    $config = CRM_Streetimport_Config::singleton();
+    $activity_data = [
+        'activity_type_id'    => $this->getPremiumActivityTypeID(),
+        'subject'             => $subject,
+        'status_id'           => CRM_Core_Pseudoconstant::getKey('CRM_Activity_BAO_Activity', 'activity_status_id', $status),
+        'activity_date_time'  => date('YmdHis'),
+        'target_contact_id'   => (int) $contact['id'],
+        'source_contact_id'   => (int) $config->getCurrentUserID(),
+    ];
+
+    // assign
+    if ($status == 'Scheduled') {
+      // assign to "fundraiser"
+      $activity_data['assignee_contact_id'] = $config->getFundraiserContactID();
+    }
+
+    // render content
+    $data = [
+        'customer'    => $this->extractAddress($record, 'Kd_'),
+        'old_address' => $this->extractAddress($record, 'E_'),
+        'new_address' => $this->extractAddress($record, 'NSA_'),
+        'record'      => $record];
+    $activity_data['details'] = $this->renderTemplate('PremiumAddressActivity.tpl', $data);
+
+    $this->createActivity($activity_data, $record);
   }
 
   protected function deleteAddresses($contact, $record) {
@@ -225,29 +257,6 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
     // TODO
   }
 
-
-  /**
-   * Find all addresses with the contact
-   *
-   * @param $contact_data
-   * @throws CiviCRM_API3_Exception
-   * @return array addresses
-   */
-  protected function findAddresses($contacts, $record) {
-    if (empty($contacts)) {
-      // no contacts found
-      return [];
-    }
-
-    // else: find all addresses from the contacts
-    $addresses = civicrm_api3('Address', 'get', [
-        'contact_id'   => ['IN' => array_keys($contacts)],
-        'option.limit' => 0,
-        'sequential'   => 0,
-    ]);
-    CRM_Core_Error::debug_log_message("Found " . $addresses['count'] . " addresses.");
-    return $addresses['values'];
-  }
 
   /**
    * Function to pick the best matching address from the list
@@ -291,4 +300,13 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
       return NULL;
     }
   }
+
+
+  /**
+   * Get (or create) the "Premium Address Update" activity type
+   */
+  protected function getPremiumActivityTypeID() {
+    return $this->getActivityTypeID('premium_address_update', "Premium Address Update");
+  }
+
 }
