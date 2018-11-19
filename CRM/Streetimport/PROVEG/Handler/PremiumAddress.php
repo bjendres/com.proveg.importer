@@ -53,8 +53,8 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
         case 10:
           # "Empfänger / Firma unter der angegebenen Anschrift nicht zu ermitteln"
           # Kd_: ja, E_: nein, _NSA: nein
-          $this->createPremiumActivity($contact, $record, 'Address invalid', 'Scheduled');
-          $this->deleteAddresses($contact, $record);
+          $deleted_addresses = $this->deleteAddresses($contact, $record);
+          $this->createPremiumActivity($contact, $record, 'Address invalid', 'Scheduled', $deleted_addresses);
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
@@ -69,8 +69,8 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
         case 14:
           # Empfänger / Firma unter der angegebenen Anschrift nicht zu ermitteln, Qualifiziert durch Datenbank
           # Kd_: ja, E_: ja, _NSA: nein
-          $this->deleteAddresses($contact, $record);
-          $this->createPremiumActivity($contact, $record, 'Moved (address unknown)', 'Completed');
+          $deleted_addresses = $this->deleteAddresses($contact, $record);
+          $this->createPremiumActivity($contact, $record, 'Moved (address unknown)', 'Completed', $deleted_addresses);
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
@@ -78,24 +78,24 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
           # Empfänger verzogen
           #  Kd_: ja, E_: ja, _NSA: ja
           $this->addAddress($contact, $record);
-          $this->deleteAddresses($contact, $record);
-          $this->createPremiumActivity($contact, $record, 'Moved', 'Completed');
+          $deleted_addresses = $this->deleteAddresses($contact, $record);
+          $this->createPremiumActivity($contact, $record, 'Moved', 'Completed', $deleted_addresses);
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
         case 21:
           # Empfänger verzogen, Einwilligung zur Weitergabe der neuen Anschrift liegt nicht vor
           #  Kd_: ja, E_: ja, _NSA: nein
-          $this->deleteAddresses($contact, $record);
-          $this->createPremiumActivity($contact, $record, 'Moved (address classified)', 'Completed');
+          $deleted_addresses = $this->deleteAddresses($contact, $record);
+          $this->createPremiumActivity($contact, $record, 'Moved (address classified)', 'Completed', $deleted_addresses);
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
         case 31:
           # Mängel in Adresse (PLZ, Ort, Straße, Hausnummer, Postfach)
           # Kd_: ja, E_: teilw., _NSA: nein
-          $this->deleteAddresses($contact, $record);
-          $this->createPremiumActivity($contact, $record, 'Moved (address unknown)', 'Completed');
+          $deleted_addresses = $this->deleteAddresses($contact, $record);
+          $this->createPremiumActivity($contact, $record, 'Moved (address unknown)', 'Completed', $deleted_addresses);
           $this->getLogger()->logImport($record, true, $config->translate('Premium Address'));
           break;
 
@@ -218,7 +218,7 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
    * @param $subject
    * @param $status
    */
-  protected function createPremiumActivity($contact, $record, $subject, $status) {
+  protected function createPremiumActivity($contact, $record, $subject, $status, $deleted_addresses = array()) {
     $config = CRM_Streetimport_Config::singleton();
     $activity_data = [
         'activity_type_id'    => $this->getPremiumActivityTypeID(),
@@ -237,24 +237,61 @@ class CRM_Streetimport_PROVEG_Handler_PremiumAddress extends CRM_Streetimport_PR
 
     // render content
     $data = [
-        'customer'    => $this->extractAddress($record, 'Kd_'),
-        'old_address' => $this->extractAddress($record, 'E_'),
-        'new_address' => $this->extractAddress($record, 'NSA_'),
-        'record'      => $record];
+        'customer'          => $this->extractAddress($record, 'Kd_'),
+        'old_address'       => $this->extractAddress($record, 'E_'),
+        'new_address'       => $this->extractAddress($record, 'NSA_'),
+        'deleted_addresses' => $deleted_addresses,
+        'record'            => $record];
     $activity_data['details'] = $this->renderTemplate('PremiumAddressActivity.tpl', $data);
 
     $this->createActivity($activity_data, $record);
   }
 
+  /**
+   * Delete the addresses as specified by the file
+   *  and return their data
+   *
+   * @param $contact
+   * @param $record
+   * @throws CiviCRM_API3_Exception
+   */
   protected function deleteAddresses($contact, $record) {
-    $this->getLogger()->logMessage("Would delete address: {$contact['street_address']} | {$contact['postal_code']} {$contact['city']}", $record);
-    // TODO
+    $addresses_deleted = array();
+    if (!empty($contact['address'])) {
+      $address_search = civicrm_api3('Address', 'get', array(
+          'contact_id'     => $contact['id'],
+          'street_address' => $contact['address']['street_address'],
+          'postal_code'    => $contact['address']['postal_code'],
+          'city'           => $contact['address']['city']
+      ));
+      foreach ($address_search['values'] as $address) {
+        civicrm_api3('Address', 'delete', ['id' => $address['id']]);
+        $addresses_deleted[] = $address;
+        $this->getLogger()->logMessage("Deleted address: {$address['street_address']} | {$address['postal_code']} {$address['city']}", $record);
+      }
+    }
+
+    return $addresses_deleted;
   }
 
+  /**
+   * Create the new address
+   *
+   * @param $contact
+   * @param $record
+   */
   protected function addAddress($contact, $record) {
     $entry_new = $this->extractAddress($record, 'NSA_');
-    $this->getLogger()->logMessage("Would add new address: {$entry_new['street_address']} | {$entry_new['postal_code']} {$entry_new['city']}", $record);
-    // TODO
+    $entry_new['contact_id'] = $contact['id'];
+    $entry_new['is_primary'] = 1;
+    $entry_new['country_id'] = 'DE';
+    if (!empty($contact['address']['location_type_id'])) {
+      $entry_new['location_type_id'] = $contact['address']['location_type_id'];
+    } else {
+      $entry_new['location_type_id'] = 'Privat';
+    }
+    civicrm_api3('Address', 'create', $entry_new);
+    $this->getLogger()->logMessage("Created new address: {$entry_new['street_address']} | {$entry_new['postal_code']} {$entry_new['city']}", $record);
   }
 
 
